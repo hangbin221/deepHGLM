@@ -78,6 +78,36 @@ def cumul_hazard(y, d, xb, zv):
     res = Mi@(tie_count/(np.exp(xb+zv).T@Mi)[0])
     return res
 
+def lossB(yd_true, y_pred):
+    
+    time, event = yd_true[:, 0], yd_true[:, 1]
+    y_pred = tf.cast(K.flatten(y_pred), dtype=tf.float32)
+    exp_y_pred = K.exp(y_pred)
+    n = tf.shape(time)[0]
+
+    sort_index = tf.argsort(time, direction='DESCENDING')
+    time   = tf.reverse(tf.gather(time,   sort_index), axis=[0])
+    event  = tf.reverse(tf.gather(event,  sort_index), axis=[0])
+    y_pred = tf.reverse(tf.gather(y_pred, sort_index), axis=[0])
+
+    time_event = time*event
+    tie_count = tf.cast(tf.unique_with_counts(tf.boolean_mask(time_event, tf.greater(time_event, 0))).count, dtype=tf.float32)
+    time_count = tf.cast(K.cumsum(tf.unique_with_counts(time).count) - 1, dtype=tf.int32)
+
+    ind_matrix = tf.cast(tf.equal(K.expand_dims(time, 0), K.expand_dims(time, 1)), dtype=tf.float32)
+    ind_matrix = tf.gather(ind_matrix, time_count)
+    tie_haz = K.dot(ind_matrix, K.expand_dims(exp_y_pred*event, axis=-1))
+    event_index = tf.math.not_equal(tie_haz, 0)
+
+    tie_risk = K.dot(ind_matrix, K.expand_dims(y_pred*event, axis=-1))    
+    cum_haz  = K.reverse(tf.cumsum(K.reverse(K.dot(ind_matrix, K.expand_dims(K.exp(y_pred))), axes = 0)), axes = 0)
+    tie_risk = tf.boolean_mask(tie_risk, event_index)
+    cum_haz  = tf.boolean_mask(cum_haz,  event_index)
+    
+    log_lik = tf.reduce_sum(tie_risk) - tf.reduce_sum(tie_count * tf.math.log(cum_haz))
+
+    return -log_lik
+
 def d1_lambda(lam, y_sum, mu_sum):
     out = (
         polygamma(0, (y_sum+(1/lam))) - polygamma(0, (1/lam)) + np.log((1/lam)) + 1 
